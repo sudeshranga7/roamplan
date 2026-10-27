@@ -101,6 +101,7 @@ export default function App() {
 
       <footer className="wrap muted small foot">
         Places © OpenStreetMap contributors · Destination text from Wikivoyage/Wikipedia · Popularity from Wikipedia pageviews · Weather by Open-Meteo. Verify timings and prices before you go.
+        <br />Built by Sudesh Ranga.
       </footer>
     </>
   );
