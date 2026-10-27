@@ -18,7 +18,7 @@ By default it loads a Goa weekend for a 16-person office group (beaches, cafés,
 
 | Need | Source |
 | --- | --- |
-| Places (beaches, cafés, clubs, sights...) | OpenStreetMap via Nominatim and Overpass |
+| Places (beaches, cafés, clubs, sights...) | OpenStreetMap via Nominatim (topped up from Overpass when results are thin) |
 | Destination intro | Wikivoyage, falling back to Wikipedia |
 | Popular right now | Wikipedia pageviews (last 30 days) |
 | Weather | Open-Meteo (called from the browser) |
@@ -57,7 +57,7 @@ Notes for the free tier:
 
 - The service sleeps after about 15 minutes idle, so the first visit can take around 50 seconds.
 - The disk is wiped on restart. The Goa default is pre-cached in [.cache/](.cache/) and ships with the repo, so it loads quickly.
-- The first search for any other place can take up to a minute while the public OpenStreetMap servers respond. Results are then cached for 7 days. If those servers fail, older cached data is used.
+- The first search for any other place usually takes 20 to 45 seconds, because Nominatim allows one request per second. Results are then cached for 7 days, and older cached data is used if the servers fail.
 
 ## Project layout
 
@@ -89,6 +89,7 @@ Returns `destination`, `summary`, `trends`, `groupTips` and `plans` (`relaxed`, 
 
 - Opening hours and prices are not guaranteed; check before you go.
 - Sparse OpenStreetMap areas produce thinner plans, and very small places may return an error.
+- Names appear as "English (local)" when OpenStreetMap has an English name, and in the local language otherwise.
 - Interests are matched by keyword (beach, cafe, club, watersports, sights, nature, shopping, food).
 
 ## Credits

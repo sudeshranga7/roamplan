@@ -30,8 +30,9 @@ const send = (res, code, obj) => {
 http.createServer(async (req, res) => {
   try {
     if (req.method === "POST" && req.url === "/api/itinerary") {
-      const input = JSON.parse(await readBody(req));
-      if (!Array.isArray(input.places) || !input.places.length || !/^\d{4}-\d{2}-\d{2}$/.test(input.startDate || ""))
+      let input;
+      try { input = JSON.parse(await readBody(req)); } catch { return send(res, 400, { error: "Invalid request." }); }
+      if (!input || !Array.isArray(input.places) || !input.places.length || !/^\d{4}-\d{2}-\d{2}$/.test(input.startDate || ""))
         return send(res, 400, { error: "Please provide places and a start date." });
       input.places = input.places.slice(0, 6).map((p) => String(p).trim().slice(0, 80)).filter(Boolean);
       input.days = Math.min(Math.max(parseInt(input.days) || 3, 1), 14);
@@ -40,7 +41,8 @@ http.createServer(async (req, res) => {
       return send(res, 200, await plan(input));
     }
     // Static files from dist/, with index.html as the fallback for the single-page app.
-    const rel = decodeURIComponent(req.url.split("?")[0]).replace(/^\/+/, "");
+    let rel;
+    try { rel = decodeURIComponent(req.url.split("?")[0]).replace(/^\/+/, ""); } catch { res.writeHead(400); return res.end("Bad request"); }
     let file = path.join(DIST, rel);
     if (!file.startsWith(DIST + path.sep) && file !== DIST) { res.writeHead(403); return res.end("Forbidden"); }
     if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(DIST, "index.html");
@@ -52,7 +54,8 @@ http.createServer(async (req, res) => {
     });
     fs.createReadStream(file).pipe(res);
   } catch (e) {
+    if (e.status) return send(res, e.status, { error: e.message });
     console.error(e);
-    send(res, 500, { error: e.message || "Could not build the itinerary. Please try again." });
+    send(res, 500, { error: "Something went wrong building the itinerary. Please try again." });
   }
 }).listen(PORT, () => console.log(`RoamPlan running at http://localhost:${PORT}`));

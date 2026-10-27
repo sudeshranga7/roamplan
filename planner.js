@@ -4,12 +4,13 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 
-const UA = "RoamPlan/1.0 (self-hosted trip planner)";
+const UA = "RoamPlan/1.0 (+https://roamplan.onrender.com)";
 const CACHE_DIR = path.join(__dirname, ".cache");
 const OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter", "https://overpass.private.coffee/api/interpreter", "https://maps.mail.ru/osm/tools/overpass/api/interpreter"];
 
 // ---------- caching ----------
-async function cached(key, ttlMs, fn) {
+// `keep` decides whether a fresh result is worth saving (partial results aren't).
+async function cached(key, ttlMs, fn, keep = () => true) {
   const file = path.join(CACHE_DIR, crypto.createHash("sha1").update(key).digest("hex") + ".json");
   let stale = null;
   try {
@@ -19,13 +20,29 @@ async function cached(key, ttlMs, fn) {
   } catch {}
   let val;
   try { val = await fn(); } catch (e) { if (stale) return stale; throw e; } // old data beats an error
-  fs.mkdirSync(CACHE_DIR, { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(val));
+  if (keep(val)) {
+    fs.mkdirSync(CACHE_DIR, { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(val));
+  }
   return val;
 }
 const DAY = 864e5;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-let lastNominatim = 0;
+
+// Nominatim's usage policy allows one request per second, so every call goes through one queue.
+let nomQueue = Promise.resolve();
+function nominatim(params) {
+  const run = nomQueue.then(async () => {
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&${new URLSearchParams(params)}`, {
+      headers: { "user-agent": UA, referer: "https://roamplan.onrender.com" },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!r.ok) throw new Error(`Nominatim ${r.status}`);
+    return r.json();
+  });
+  nomQueue = run.catch(() => {}).then(() => sleep(1100));
+  return run;
+}
 
 // ---------- interests -> categories ----------
 const INTEREST_WORDS = [
@@ -46,11 +63,12 @@ function parseInterests(text) {
 
 // ---------- OpenStreetMap queries ----------
 const CATS = {
-  beach: { q: ['nwr["natural"="beach"]["name"]'], limit: 80 },
-  cafe: { q: ['nwr["amenity"="cafe"]["name"]'], limit: 120 },
-  restaurant: { q: ['nwr["amenity"="restaurant"]["name"]'], limit: 150 },
-  nightlife: { q: ['nwr["amenity"~"^(nightclub|bar|pub)$"]["name"]'], limit: 120 },
+  beach: { nom: ["beach"], q: ['nwr["natural"="beach"]["name"]'], limit: 80 },
+  cafe: { nom: ["cafe"], q: ['nwr["amenity"="cafe"]["name"]'], limit: 120 },
+  restaurant: { nom: ["restaurant"], q: ['nwr["amenity"="restaurant"]["name"]'], limit: 150 },
+  nightlife: { nom: ["nightclub", "bar", "pub"], q: ['nwr["amenity"~"^(nightclub|bar|pub)$"]["name"]'], limit: 120 },
   watersports: {
+    nom: ["water sports", { q: "scuba" }, { q: "surf" }, { q: "kayak" }],
     q: [
       'nwr["sport"~"surfing|scuba_diving|water_ski|kayak|canoe|sailing|kitesurfing|windsurfing"]["name"]',
       'nwr["shop"="scuba_diving"]["name"]',
@@ -59,6 +77,7 @@ const CATS = {
     limit: 60,
   },
   sight: {
+    nom: ["attraction", "museum", "viewpoint", "castle", "monument", "place of worship"],
     q: [
       'nwr["tourism"~"^(attraction|viewpoint|museum|gallery|zoo|theme_park|aquarium)$"]["name"]',
       'nwr["historic"~"^(castle|fort|monument|ruins|archaeological_site|memorial)$"]["name"]',
@@ -66,18 +85,13 @@ const CATS = {
     ],
     limit: 120,
   },
-  nature: { q: ['nwr["leisure"~"^(park|nature_reserve|garden)$"]["name"]', 'nwr["natural"~"^(waterfall|peak|cave_entrance)$"]["name"]'], limit: 80 },
-  shopping: { q: ['nwr["shop"~"^(mall|department_store)$"]["name"]', 'nwr["amenity"="marketplace"]["name"]'], limit: 60 },
+  nature: { nom: ["park", "garden", "nature reserve", "waterfall"], q: ['nwr["leisure"~"^(park|nature_reserve|garden)$"]["name"]', 'nwr["natural"~"^(waterfall|peak|cave_entrance)$"]["name"]'], limit: 80 },
+  shopping: { nom: ["mall", "marketplace"], q: ['nwr["shop"~"^(mall|department_store)$"]["name"]', 'nwr["amenity"="marketplace"]["name"]'], limit: 60 },
 };
 
 async function geocode(place) {
   return cached("geo:" + place.toLowerCase(), 30 * DAY, async () => {
-    const wait = 1100 - (Date.now() - lastNominatim);
-    if (wait > 0) await sleep(wait);
-    lastNominatim = Date.now();
-    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(place)}`, { headers: { "user-agent": UA } });
-    if (!r.ok) throw new Error(`Geocoding failed (${r.status})`);
-    const g = (await r.json())[0];
+    const g = (await nominatim({ q: place, limit: 1, "accept-language": "en" }))[0];
     if (!g) return null;
     let [s, n, w, e] = g.boundingbox.map(Number);
     const lat = +g.lat, lon = +g.lon;
@@ -89,21 +103,20 @@ async function geocode(place) {
 }
 
 // Public Overpass servers are often overloaded: ask every mirror at once and take the first answer.
+// Only used to top up thin Nominatim results.
 async function overpass(query) {
   const one = async (url) => {
     const r = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded", "user-agent": UA },
       body: "data=" + encodeURIComponent(query),
-      signal: AbortSignal.timeout(30000),
+      signal: AbortSignal.timeout(20000),
     });
     if (!r.ok) throw new Error(`Overpass ${r.status}`);
     return (await r.json()).elements;
   };
-  for (let round = 0; round < 2; round++) {
-    try { return await Promise.any(OVERPASS.map(one)); } catch { await sleep(2000); }
-  }
-  throw new Error("The free map servers are busy right now. Please try again in a minute.");
+  try { return await Promise.any(OVERPASS.map(one)); }
+  catch { throw new Error("Overpass unavailable"); }
 }
 
 function classify(t) {
@@ -112,10 +125,10 @@ function classify(t) {
   if (amenity === "cafe") return "cafe";
   if (amenity === "restaurant") return "restaurant";
   if (/^(nightclub|bar|pub)$/.test(amenity)) return "nightlife";
-  if (/surfing|scuba|water_ski|kayak|canoe|sailing|kitesurf|windsurf/.test(t.sport || "") || t.shop === "scuba_diving" ||
+  if (/surfing|scuba|water_ski|kayak|canoe|sailing|kitesurf|windsurf/.test(t.sport || "") || /^(scuba_diving|water_sports)$/.test(t.shop || "") ||
       (!amenity && /parasail|jet ?ski|water ?sport|banana boat|scuba|snorkel|kayak|diving/i.test(t.name || ""))) return "watersports";
   if (/^(attraction|viewpoint|museum|gallery|zoo|theme_park|aquarium)$/.test(t.tourism || "") || t.historic || (amenity === "place_of_worship" && t.wikipedia)) return "sight";
-  if (/^(park|nature_reserve|garden)$/.test(t.leisure || "") || /^(waterfall|peak|cave_entrance)$/.test(t.natural || "")) return "nature";
+  if (/^(park|nature_reserve|garden)$/.test(t.leisure || "") || /^(waterfall|peak|cave_entrance)$/.test(t.natural || "") || t.waterway === "waterfall") return "nature";
   if (/^(mall|department_store)$/.test(t.shop || "") || amenity === "marketplace") return "shopping";
   return null;
 }
@@ -135,36 +148,59 @@ function score(t, cat) {
   return s;
 }
 
-// One small query per category: each is cached on its own, and a slow one can't sink the rest.
+function makePoi(id, t, lat, lon, bonus = 0) {
+  const name = t["name:en"] && t.name && t["name:en"] !== t.name && !t.name.includes(t["name:en"]) ? `${t["name:en"]} (${t.name})` : t["name:en"] || t.name;
+  const cat = classify(t);
+  if (!cat || !name || lat == null || lon == null) return null;
+  return {
+    id, name, cat, lat: +lat, lon: +lon, score: score(t, cat) + bonus,
+    viewpoint: t.tourism === "viewpoint", club: t.amenity === "nightclub",
+    cuisine: t.cuisine, hours: t.opening_hours, website: t.website || t["contact:website"], wikipedia: t.wikipedia,
+  };
+}
+
+// Nominatim result -> OSM-style tags, so classify/score work the same for both sources.
+// Names show as "English (local)" when both exist, e.g. "Tokyo Tower (東京タワー)".
+function displayName(x) {
+  const local = x.namedetails?.name || x.name, en = x.namedetails?.["name:en"];
+  return en && local && en !== local ? `${en} (${local})` : en || local;
+}
+const fromNominatim = (x) =>
+  makePoi(x.osm_type + x.osm_id, { ...(x.extratags || {}), name: displayName(x), [x.category]: x.type }, x.lat, x.lon, Math.round((x.importance || 0) * 5));
+const fromOverpass = (el) => makePoi(el.type + el.id, el.tags || {}, el.lat ?? el.center?.lat, el.lon ?? el.center?.lon);
+
+// One cache entry per category, so a failure in one can't sink the rest.
 async function fetchCat(geo, cat) {
   let [s, w, n, e] = geo.bbox;
   const clamp = (lo, hi, max) => (hi - lo > max ? [(lo + hi) / 2 - max / 2, (lo + hi) / 2 + max / 2] : [lo, hi]);
   [s, n] = clamp(s, n, 0.5); [w, e] = clamp(w, e, 0.5);
-  const bb = `(${s},${w},${n},${e})`;
-  const key = `poi2:${geo.lat.toFixed(3)},${geo.lon.toFixed(3)}:${cat}`;
-  return cached(key, 7 * DAY, async () => {
-    const els = await overpass(`[out:json][timeout:25];(${CATS[cat].q.map((q) => q + bb + ";").join("")});out center tags ${CATS[cat].limit};`);
-    const seen = new Set(), pois = [];
-    for (const el of els) {
-      const t = el.tags || {};
-      const c = classify(t), lat = el.lat ?? el.center?.lat, lon = el.lon ?? el.center?.lon;
-      const id = el.type + el.id;
-      if (!c || !t.name || lat == null || seen.has(id)) continue;
-      seen.add(id);
-      pois.push({
-        id, name: t.name, cat: c, lat, lon, score: score(t, c),
-        viewpoint: t.tourism === "viewpoint", club: t.amenity === "nightclub",
-        cuisine: t.cuisine, hours: t.opening_hours, website: t.website || t["contact:website"], wikipedia: t.wikipedia,
-      });
+  const key = `poi3:${geo.lat.toFixed(3)},${geo.lon.toFixed(3)}:${cat}`;
+  const val = await cached(key, 7 * DAY, async () => {
+    const pois = [], seen = new Set();
+    const add = (p) => { if (p && !seen.has(p.id)) { seen.add(p.id); pois.push(p); } };
+    let ok = 0, failed = 0;
+    for (const phrase of CATS[cat].nom) {
+      const params = { ...(typeof phrase === "string" ? { amenity: phrase } : phrase),
+        limit: 40, viewbox: `${w},${n},${e},${s}`, bounded: 1, extratags: 1, namedetails: 1 };
+      try { (await nominatim(params)).forEach((x) => add(fromNominatim(x))); ok++; }
+      catch (err) { failed++; console.error(`nominatim ${cat}/${params.amenity || params.q}: ${err.message}`); }
     }
-    return pois;
-  });
+    if (pois.length < 10) {
+      try {
+        const bb = `(${s},${w},${n},${e})`;
+        (await overpass(`[out:json][timeout:18];(${CATS[cat].q.map((q) => q + bb + ";").join("")});out center tags ${CATS[cat].limit};`)).forEach((el) => add(fromOverpass(el)));
+        ok++;
+      } catch {}
+    }
+    if (!ok) throw new Error("all sources failed");
+    return { pois, complete: failed === 0 };
+  }, (v) => v.complete);
+  return Array.isArray(val) ? val : val.pois; // older cache files hold a bare array
 }
 
 async function fetchPois(geo, cats) {
   const list = [...cats], results = [], failed = [];
   let next = 0;
-  // Three at a time keeps us inside the public servers' per-IP limits.
   await Promise.all(Array.from({ length: 3 }, async () => {
     while (next < list.length) {
       const cat = list[next++];
@@ -177,7 +213,7 @@ async function fetchPois(geo, cats) {
 
 // ---------- extras: destination blurb + popularity ----------
 async function blurb(name) {
-  return cached("blurb:" + name.toLowerCase(), 7 * DAY, async () => {
+  return cached("blurb2:" + name.toLowerCase(), 7 * DAY, async () => {
     for (const host of ["en.wikivoyage.org", "en.wikipedia.org"]) {
       try {
         const r = await fetch(`https://${host}/w/api.php?action=query&prop=extracts&exintro=1&explaintext=1&redirects=1&format=json&titles=${encodeURIComponent(name)}`, { headers: { "user-agent": UA } });
@@ -185,7 +221,7 @@ async function blurb(name) {
         const text = (page.extract || "").replace(/\s*\([^)]*[^\x00-\x7F][^)]*\)/g, "").replace(/\s+/g, " ").trim();
         if (text.length > 60) {
           let out = "";
-          for (const sent of text.split(/(?<=[.!?])\s+/)) { if ((out + sent).length > 320 && out) break; out += (out ? " " : "") + sent; }
+          for (const sent of text.split(/(?<=[.!?])\s+/).filter((x) => !/^(For\b.*\bsee\b|This article\b)/i.test(x))) { if ((out + sent).length > 320 && out) break; out += (out ? " " : "") + sent; }
           return out;
         }
       } catch {}
@@ -339,6 +375,9 @@ function groupTips(n, interests) {
 }
 
 // ---------- entry point ----------
+// Problems with the request itself (unknown place, no data) rather than bugs.
+class UserError extends Error { constructor(msg) { super(msg); this.status = 422; } }
+
 async function plan(input) {
   const interests = parseInterests(input.interests);
   const cats = new Set([...interests, "restaurant", "sight", "beach", "cafe"]);
@@ -351,13 +390,15 @@ async function plan(input) {
   const missing = [];
   for (const name of used) {
     const geo = await geocode(name);
-    if (!geo) throw new Error(`Couldn't find "${name}". Try a more specific name.`);
+    if (!geo) throw new UserError(`Couldn't find "${name}". Try a more specific name.`);
     const { pois, failed } = await fetchPois(geo, cats);
     if (failed.length) missing.push(`${failed.join(", ")} for ${name}`);
     const pools = {};
     for (const p of pois) (pools[p.cat] ||= []).push(p);
     for (const c in pools) pools[c].sort((a, b) => b.score - a.score);
-    if (pois.length < 5) throw new Error(`Not enough mapped places found for "${name}".`);
+    if (pois.length < 5) throw new UserError(failed.length
+      ? `The free map servers are busy, so we couldn't load places for "${name}". Please try again in a minute.`
+      : `Not enough mapped places found for "${name}". Try a nearby city or a more specific name.`);
     segments.push({ name, pools });
     allPois.push(...pois);
   }
