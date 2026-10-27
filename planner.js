@@ -6,7 +6,7 @@ const crypto = require("crypto");
 
 const UA = "RoamPlan/1.0 (self-hosted trip planner)";
 const CACHE_DIR = path.join(__dirname, ".cache");
-const OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter", "https://overpass.private.coffee/api/interpreter"];
+const OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter", "https://overpass.private.coffee/api/interpreter", "https://maps.mail.ru/osm/tools/overpass/api/interpreter"];
 
 // ---------- caching ----------
 async function cached(key, ttlMs, fn) {
@@ -82,27 +82,28 @@ async function geocode(place) {
     let [s, n, w, e] = g.boundingbox.map(Number);
     const lat = +g.lat, lon = +g.lon;
     const fit = (lo, hi, c, min, max) => (hi - lo > max ? [c - max / 2, c + max / 2] : hi - lo < min ? [c - min / 2, c + min / 2] : [lo, hi]);
-    [s, n] = fit(s, n, lat, 0.08, 1.2);
-    [w, e] = fit(w, e, lon, 0.08, 1.2);
+    [s, n] = fit(s, n, lat, 0.08, 0.7);
+    [w, e] = fit(w, e, lon, 0.08, 0.7);
     return { name: g.name || place, lat, lon, bbox: [s, w, n, e] };
   });
 }
 
+// Public Overpass servers are often overloaded: ask every mirror at once and take the first answer.
 async function overpass(query) {
-  let err;
-  for (const url of OVERPASS) {
-    try {
-      const r = await fetch(url, {
-        method: "POST",
-        headers: { "content-type": "application/x-www-form-urlencoded", "user-agent": UA },
-        body: "data=" + encodeURIComponent(query),
-        signal: AbortSignal.timeout(50000),
-      });
-      if (r.ok) return (await r.json()).elements;
-      err = new Error(`Overpass ${r.status}`);
-    } catch (e) { err = e; }
+  const one = async (url) => {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", "user-agent": UA },
+      body: "data=" + encodeURIComponent(query),
+      signal: AbortSignal.timeout(30000),
+    });
+    if (!r.ok) throw new Error(`Overpass ${r.status}`);
+    return (await r.json()).elements;
+  };
+  for (let round = 0; round < 2; round++) {
+    try { return await Promise.any(OVERPASS.map(one)); } catch { await sleep(2000); }
   }
-  throw err;
+  throw new Error("The free map servers are busy right now. Please try again in a minute.");
 }
 
 function classify(t) {
@@ -139,7 +140,7 @@ async function fetchPois(geo, cats) {
   const key = `poi:${geo.lat.toFixed(3)},${geo.lon.toFixed(3)}:${[...cats].sort().join(",")}`;
   return cached(key, 7 * DAY, async () => {
     const stmts = [...cats].map((c, i) => `(${CATS[c].q.map((q) => q + bb + ";").join("")})->.c${i}; .c${i} out center tags ${CATS[c].limit};`);
-    const els = await overpass(`[out:json][timeout:40];${stmts.join("")}`);
+    const els = await overpass(`[out:json][timeout:25];${stmts.join("")}`);
     const seen = new Set(), pois = [];
     for (const el of els) {
       const t = el.tags || {};
