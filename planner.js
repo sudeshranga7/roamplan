@@ -135,27 +135,44 @@ function score(t, cat) {
   return s;
 }
 
-async function fetchPois(geo, cats) {
-  const [s, w, n, e] = geo.bbox, bb = `(${s},${w},${n},${e})`;
-  const key = `poi:${geo.lat.toFixed(3)},${geo.lon.toFixed(3)}:${[...cats].sort().join(",")}`;
+// One small query per category: each is cached on its own, and a slow one can't sink the rest.
+async function fetchCat(geo, cat) {
+  let [s, w, n, e] = geo.bbox;
+  const clamp = (lo, hi, max) => (hi - lo > max ? [(lo + hi) / 2 - max / 2, (lo + hi) / 2 + max / 2] : [lo, hi]);
+  [s, n] = clamp(s, n, 0.5); [w, e] = clamp(w, e, 0.5);
+  const bb = `(${s},${w},${n},${e})`;
+  const key = `poi2:${geo.lat.toFixed(3)},${geo.lon.toFixed(3)}:${cat}`;
   return cached(key, 7 * DAY, async () => {
-    const stmts = [...cats].map((c, i) => `(${CATS[c].q.map((q) => q + bb + ";").join("")})->.c${i}; .c${i} out center tags ${CATS[c].limit};`);
-    const els = await overpass(`[out:json][timeout:25];${stmts.join("")}`);
+    const els = await overpass(`[out:json][timeout:25];(${CATS[cat].q.map((q) => q + bb + ";").join("")});out center tags ${CATS[cat].limit};`);
     const seen = new Set(), pois = [];
     for (const el of els) {
       const t = el.tags || {};
-      const cat = classify(t), lat = el.lat ?? el.center?.lat, lon = el.lon ?? el.center?.lon;
+      const c = classify(t), lat = el.lat ?? el.center?.lat, lon = el.lon ?? el.center?.lon;
       const id = el.type + el.id;
-      if (!cat || !t.name || lat == null || seen.has(id)) continue;
+      if (!c || !t.name || lat == null || seen.has(id)) continue;
       seen.add(id);
       pois.push({
-        id, name: t.name, cat, lat, lon, score: score(t, cat),
+        id, name: t.name, cat: c, lat, lon, score: score(t, c),
         viewpoint: t.tourism === "viewpoint", club: t.amenity === "nightclub",
         cuisine: t.cuisine, hours: t.opening_hours, website: t.website || t["contact:website"], wikipedia: t.wikipedia,
       });
     }
     return pois;
   });
+}
+
+async function fetchPois(geo, cats) {
+  const list = [...cats], results = [], failed = [];
+  let next = 0;
+  // Three at a time keeps us inside the public servers' per-IP limits.
+  await Promise.all(Array.from({ length: 3 }, async () => {
+    while (next < list.length) {
+      const cat = list[next++];
+      try { results.push(...(await fetchCat(geo, cat))); } catch (e) { failed.push(cat); console.error(`${cat} failed for ${geo.name}: ${e.message}`); }
+    }
+  }));
+  const seen = new Set();
+  return { pois: results.filter((p) => !seen.has(p.id) && seen.add(p.id)), failed };
 }
 
 // ---------- extras: destination blurb + popularity ----------
@@ -331,10 +348,12 @@ async function plan(input) {
 
   const segments = [];
   const allPois = [];
+  const missing = [];
   for (const name of used) {
     const geo = await geocode(name);
     if (!geo) throw new Error(`Couldn't find "${name}". Try a more specific name.`);
-    const pois = await fetchPois(geo, cats);
+    const { pois, failed } = await fetchPois(geo, cats);
+    if (failed.length) missing.push(`${failed.join(", ")} for ${name}`);
     const pools = {};
     for (const p of pois) (pools[p.cat] ||= []).push(p);
     for (const c in pools) pools[c].sort((a, b) => b.score - a.score);
@@ -354,7 +373,8 @@ async function plan(input) {
   return {
     destination: used.join(" → "),
     places: used,
-    summary: [intro, skipped.length ? `Not enough days to include: ${skipped.join(", ")}.` : ""].filter(Boolean).join(" ") ||
+    summary: [intro, skipped.length ? `Not enough days to include: ${skipped.join(", ")}.` : "",
+      missing.length ? `Note: the free map servers were busy, so some places are missing (${missing.join("; ")}). Search again in a minute to fill them in.` : ""].filter(Boolean).join(" ") ||
       `A ${nDays}-day plan for ${used.join(", ")}.`,
     trends, groupTips: groupTips(input.travellers, interests), plans,
   };
