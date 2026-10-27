@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: roamplan
+    runtime: node
+    plan: free
+    buildCommand: npm install --include=dev && npm run build
+    startCommand: node server.js
