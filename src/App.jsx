@@ -2,19 +2,16 @@ import { useEffect, useRef, useState } from "react";
 import TripForm from "./components/TripForm.jsx";
 import Weather from "./components/Weather.jsx";
 import Itinerary from "./components/Itinerary.jsx";
-import { fetchItinerary, iso, nextFriday, readUrl, writeUrl } from "./lib.js";
+import { fetchItinerary, readUrl, writeUrl } from "./lib.js";
 
-// Default: a Goa weekend for a 16-person office group.
-const DEFAULT = () => ({
-  places: ["Goa"], startDate: iso(nextFriday()), days: 3, travellers: 16,
-  interests: "beaches, cafés, clubs, watersports",
-});
+// The landing page starts empty; the inputs show greyed-out examples instead.
+const EMPTY = { places: [], startDate: "", days: "", travellers: "", interests: "" };
 
 // A shared link (?p=...) opens that exact trip, including any reordered or removed stops.
 const fromUrl = readUrl();
 
 export default function App() {
-  const [form, setForm] = useState(() => fromUrl?.form || DEFAULT());
+  const [form, setForm] = useState(() => fromUrl?.form || EMPTY);
   const [result, setResult] = useState(null); // { plan, input }
   const [pace, setPace] = useState(fromUrl?.pace || "mid");
   const [edits, setEdits] = useState(fromUrl?.edits || {}); // { pace: { dayIndex: positions } }
@@ -22,27 +19,26 @@ export default function App() {
   const [error, setError] = useState("");
   const [shareMsg, setShareMsg] = useState("");
   const resultsRef = useRef(null);
-  const first = useRef(true);
 
-  async function run(input) {
+  async function run(input, { shared = false } = {}) {
     setForm(input);
     setBusy(true); setError("");
     try {
       const payload = { ...input, days: +input.days, travellers: +input.travellers };
       const plan = await fetchItinerary(payload);
       setResult({ plan, input: payload });
-      if (!first.current) {
-        setEdits({}); // a new plan starts unedited; the first load keeps edits from a shared link
+      if (!shared) {
+        setEdits({}); // a new plan starts unedited; a shared link keeps its edits
         resultsRef.current?.scrollIntoView({ behavior: "smooth" });
       }
     } catch (e) {
       setError(e.message);
     } finally {
-      first.current = false;
       setBusy(false);
     }
   }
-  useEffect(() => { run(form); }, []);
+  // Only a shared link plans on load.
+  useEffect(() => { if (fromUrl) run(fromUrl.form, { shared: true }); }, []);
 
   // Keep the address bar in sync, so copying it always shares what's on screen.
   useEffect(() => { if (result) writeUrl(result.input, pace, edits); }, [result, pace, edits]);

@@ -159,3 +159,6 @@ button { font: inherit; }
   .day, .wcard, .trend, .slot { break-inside: avoid; }
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
+
+input::placeholder { color: var(--faint); opacity: 1; }
+input[type="date"]:invalid::-webkit-datetime-edit { color: var(--faint); }

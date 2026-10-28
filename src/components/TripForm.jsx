@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { iso } from "../lib.js";
 
 export default function TripForm({ value, onChange, onSubmit, busy, status, error }) {
   const [draft, setDraft] = useState("");
@@ -31,7 +32,7 @@ export default function TripForm({ value, onChange, onSubmit, busy, status, erro
             </span>
           ))}
           <input
-            id="place" value={draft} placeholder={value.places.length ? "Add another…" : "Add a place, press Enter"}
+            id="place" value={draft} placeholder={value.places.length ? "Add another…" : "e.g. Goa, Tokyo, Paris"}
             onChange={(e) => setDraft(e.target.value)} onBlur={addPlace}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addPlace(); }
@@ -42,22 +43,22 @@ export default function TripForm({ value, onChange, onSubmit, busy, status, erro
       </div>
       <div className="field">
         <label htmlFor="start">Start date</label>
-        <input id="start" type="date" required value={value.startDate} onChange={(e) => set({ startDate: e.target.value })} />
+        <input id="start" type="date" required min={iso(new Date(Date.now() - new Date().getTimezoneOffset() * 60000))} value={value.startDate} onChange={(e) => set({ startDate: e.target.value })} />
       </div>
       <div className="field">
         <label htmlFor="days">Days</label>
-        <input id="days" type="number" min="1" max="14" required value={value.days} onChange={(e) => set({ days: e.target.value })} />
+        <input id="days" type="number" min="1" max="14" required placeholder="e.g. 3" value={value.days} onChange={(e) => set({ days: e.target.value })} />
       </div>
       <div className="field">
         <label htmlFor="trav">Travellers</label>
-        <input id="trav" type="number" min="1" max="200" required value={value.travellers} onChange={(e) => set({ travellers: e.target.value })} />
+        <input id="trav" type="number" min="1" max="200" required placeholder="e.g. 4" value={value.travellers} onChange={(e) => set({ travellers: e.target.value })} />
       </div>
       <div className="field full">
         <label htmlFor="int">Interests</label>
-        <input id="int" value={value.interests} placeholder="beaches, cafés, clubs, watersports" onChange={(e) => set({ interests: e.target.value })} />
+        <input id="int" value={value.interests} placeholder="e.g. beaches, cafés, museums" onChange={(e) => set({ interests: e.target.value })} />
       </div>
       <div className="actions full">
-        <button type="submit" className="primary" disabled={busy || !value.places.length}>
+        <button type="submit" className="primary" disabled={busy || (!value.places.length && !draft.trim())}>
           {busy ? "Planning…" : "Plan my trip"}
         </button>
         {status && <span className="muted small" role="status">{status}</span>}

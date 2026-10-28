@@ -2,7 +2,7 @@
 
 Tell RoamPlan where you're going, when, and for how long. It builds three itineraries (relaxed, balanced, packed) from real places, with weather and a "popular right now" list. No AI and no API keys: everything comes from free, open data.
 
-By default it loads a Goa weekend for a 16-person office group (beaches, cafés, clubs, watersports).
+The landing page starts empty, with greyed-out examples in each field.
 
 ## Features
 
@@ -60,7 +60,7 @@ Notes for the free tier:
 
 - The service normally sleeps after about 15 minutes idle. On Render the server pings its own `/healthz` every 10 minutes (using `RENDER_EXTERNAL_URL`) to stay awake. Set `KEEP_AWAKE=0` to turn this off. One always-on service uses about 744 of the 750 free instance hours a month, so don't run a second free service alongside it.
 - After a deploy or restart, the first visit can still take around 50 seconds.
-- The disk is wiped on restart. The Goa default is pre-cached in [.cache/](.cache/) and ships with the repo, so it loads quickly.
+- The disk is wiped on restart. Goa data is pre-cached in [.cache/](.cache/) and ships with the repo, so Goa searches with beach, café, club or watersports interests load instantly.
 - The first search for any other place usually takes 20 to 45 seconds, because Nominatim allows one request per second. Results are then cached for 7 days, and older cached data is used if the servers fail.
 
 ## Project layout
