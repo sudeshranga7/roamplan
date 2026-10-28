@@ -71,6 +71,7 @@ button { font: inherit; }
 
 .head { display: flex; justify-content: space-between; align-items: start; gap: 12px; flex-wrap: wrap; margin-top: 40px; }
 .head p { margin: 0; max-width: 640px; }
+.head-tools { display: flex; gap: 8px; flex-wrap: wrap; }
 .dim { opacity: .55; transition: opacity .2s; pointer-events: none; }
 
 .notice { background: var(--warn-bg); color: var(--warn-text); border-radius: 10px; padding: 10px 14px; font-size: 14px; margin: 0 0 12px; }
@@ -95,19 +96,33 @@ button { font: inherit; }
 
 .days { display: grid; gap: 16px; }
 .day { padding: 20px 22px; }
-.day h4 { margin: 0 0 14px; font-size: 18px; letter-spacing: -0.01em; }
+.day-head { display: flex; justify-content: space-between; align-items: start; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.day-tools { display: flex; gap: 6px; }
+.chip-btn { font-size: 13px; font-weight: 500; cursor: pointer; background: transparent; color: var(--text); border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; }
+.chip-btn:hover { border-color: var(--accent); }
+.chip-btn[aria-pressed="true"] { background: var(--accent-soft); border-color: transparent; }
+.daymap { height: 280px; border-radius: 12px; margin-bottom: 16px; border: 1px solid var(--line); z-index: 0; }
+.pin-wrap { background: none; border: 0; }
+.pin { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; font: 600 12px/1 Inter, system-ui, sans-serif; color: #fff; background: var(--tc, #0f766e); border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.35); }
+.leaflet-popup-content { font: 13px/1.4 Inter, system-ui, sans-serif; }
+.day h4 { margin: 0; font-size: 18px; letter-spacing: -0.01em; }
 .day h4 small { color: var(--accent); font-size: 12px; text-transform: uppercase; letter-spacing: .1em; display: block; margin-bottom: 2px; font-weight: 600; }
 .timeline { position: relative; }
-.slot { display: grid; grid-template-columns: 64px 14px 1fr; gap: 12px; padding-bottom: 18px; position: relative; }
+.slot { display: grid; grid-template-columns: 64px 20px 1fr auto; gap: 12px; padding-bottom: 18px; position: relative; }
 .slot:last-child { padding-bottom: 0; }
-.slot::before { content: ""; position: absolute; left: 76px; top: 14px; bottom: -4px; width: 2px; background: var(--line); }
+.slot::before { content: ""; position: absolute; left: 85px; top: 14px; bottom: -4px; width: 2px; background: var(--line); }
 .slot:last-child::before { display: none; }
 .slot time { color: var(--muted); font-size: 13px; padding-top: 1px; font-variant-numeric: tabular-nums; }
-.dot { width: 10px; height: 10px; border-radius: 50%; margin: 6px 2px 0; background: var(--c-travel); position: relative; z-index: 1; box-shadow: 0 0 0 3px var(--surface); }
+.dot { width: 10px; height: 10px; border-radius: 50%; margin: 6px auto 0; background: var(--c-travel); position: relative; z-index: 1; box-shadow: 0 0 0 3px var(--surface); }
 .slot-title b { font-size: 15px; }
 .slot-body p { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
 .tag { display: inline-block; font-size: 11px; font-weight: 600; border-radius: 999px; padding: 1px 9px; margin-left: 8px; vertical-align: 1px; color: var(--tc, var(--c-travel)); background: color-mix(in srgb, var(--tc, var(--c-travel)) 14%, transparent); }
 .dot { background: var(--tc, var(--c-travel)); }
+.dot.num { width: 20px; height: 20px; margin: 1px 0 0; display: grid; place-items: center; color: #fff; font-size: 11px; font-weight: 700; }
+.slot-tools { display: flex; gap: 4px; align-self: start; }
+.slot-tools button { width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--text); cursor: pointer; font-size: 14px; }
+.slot-tools button:hover:not(:disabled) { border-color: var(--accent); }
+.slot-tools button:disabled { opacity: .35; cursor: default; }
 [data-tag="Beach"] { --tc: var(--c-beach); } [data-tag="Café"] { --tc: var(--c-cafe); } [data-tag="Food"] { --tc: var(--c-food); }
 [data-tag="Club"], [data-tag="Bar"] { --tc: var(--c-club); } [data-tag="Watersports"] { --tc: var(--c-water); }
 [data-tag="Sight"] { --tc: var(--c-sight); } [data-tag="Nature"] { --tc: var(--c-nature); } [data-tag="Shopping"] { --tc: var(--c-shop); }
@@ -129,14 +144,16 @@ button { font: inherit; }
   .hero { padding-top: 32px; }
   .hide-sm { display: none; }
   .day { padding: 16px; }
-  .slot { grid-template-columns: 52px 12px 1fr; gap: 10px; }
-  .slot::before { left: 62px; }
+  .slot { grid-template-columns: 48px 20px 1fr; gap: 10px; }
+  .slot::before { left: 67px; }
+  .slot-tools { grid-column: 3; margin-top: 4px; }
+  .daymap { height: 240px; }
   .seg { width: 100%; } .seg button { flex: 1; padding: 8px 4px; }
 }
 
 @media print {
   :root { --bg: #fff; --surface: #fff; --text: #111; --muted: #555; --line: #ddd; --shadow: none; }
-  .top, .form, .hero, .seg, .ghost, .foot, .tabs-row h3 { display: none !important; }
+  .top, .form, .hero, .seg, .ghost, .foot, .tabs-row h3, .day-tools, .slot-tools, .daymap { display: none !important; }
   body { font-size: 12px; }
   .wrap { max-width: none; padding: 0; }
   .day, .wcard, .trend, .slot { break-inside: avoid; }

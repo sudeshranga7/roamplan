@@ -305,6 +305,7 @@ function makePicker(pools) {
 
 function slotFor(p, time, prev, ctx, kind) {
   const parts = [BASE[p.cat]];
+  if (kind === "sunset") parts[0] = p.cat === "beach" ? "Sunset on the beach: swim, walk and take group photos." : p.viewpoint ? "Catch the sunset from here." : parts[0];
   if ((kind === "lunch" || kind === "dinner") && p.cat === "cafe") parts[0] = kind === "lunch" ? "Light lunch." : "Casual dinner.";
   if (p.cuisine) {
     const c = p.cuisine.split(";").slice(0, 3).join(", ").replace(/_/g, " ");
@@ -312,9 +313,9 @@ function slotFor(p, time, prev, ctx, kind) {
   }
   if (p.hours && p.cat !== "beach") parts.push(`Hours: ${p.hours.slice(0, 60)}.`);
   if (ctx.travellers >= 8 && /cafe|restaurant|nightlife/.test(p.cat)) parts.push(`Reserve ahead for ${ctx.travellers} people.`);
-  if (prev) { const d = km(prev, p); if (d >= 0.5) parts.push(`About ${d < 10 ? d.toFixed(1) : Math.round(d)} km from the previous stop.`); }
   return {
     time, title: p.name, desc: parts.join(" "), tag: p.cat === "nightlife" ? (p.club ? "Club" : "Bar") : CAT_LABEL[p.cat],
+    lat: +p.lat.toFixed(6), lon: +p.lon.toFixed(6),
     link: `https://www.openstreetmap.org/?mlat=${p.lat}&mlon=${p.lon}#map=17/${p.lat}/${p.lon}`, website: p.website || undefined,
   };
 }
@@ -335,19 +336,25 @@ function buildPlan(paceKey, segments, ctx) {
       if (first && total > 1) slots.push({ time: "Arrival", title: `Arrive in ${seg.name}`, desc: "Check in, drop bags and freshen up.", tag: "Stay" });
       else if (arriving && !first) slots.push({ time: "Morning", title: `Travel to ${seg.name}`, desc: "Allow half a day for the transfer and check-in.", tag: "Travel" });
       let prev = null; const kinds = [];
+      const activity = (near) => {
+        const acts = ctx.interests.filter((c) => !/^(cafe|restaurant|nightlife)$/.test(c));
+        const order = acts.length ? acts : ["sight", "nature"];
+        let p = null;
+        for (let t = 0; t < order.length && !p; t++) p = pick([order[(actI + t) % order.length]], near);
+        actI++;
+        return p || pick(["sight", "nature", "beach"], near);
+      };
       for (const [time, kind] of defs) {
         let p = null;
         if (kind === "breakfast" || kind === "cafe") p = pick(["cafe"], prev) || (kind === "breakfast" ? pick(["restaurant"], prev) : null);
         else if (kind === "lunch" || kind === "dinner") p = pick(["restaurant", "cafe"], prev);
         else if (kind === "night") p = pick(["nightlife"], prev);
-        else if (kind === "sunset") p = pick(["beach"], prev) || pick(["sight"].filter(() => true), prev);
-        else {
-          const acts = ctx.interests.filter((c) => !/^(cafe|restaurant|nightlife)$/.test(c));
-          const order = acts.length ? acts : ["sight", "nature"];
-          for (let t = 0; t < order.length && !p; t++) p = pick([order[(actI + t) % order.length]], prev);
-          actI++;
-          if (!p) p = pick(["sight", "nature", "beach"], prev);
-        }
+        else if (kind === "sunset") {
+          // Beaches only for beach lovers; otherwise a viewpoint, a park, or simply another activity.
+          const spots = [...(ctx.interests.includes("beach") ? ["beach"] : []), "viewpoint", ...(ctx.interests.includes("nature") ? ["nature"] : [])];
+          for (const c of spots) if (!p) p = pick([c], prev);
+          if (!p) p = activity(prev);
+        } else p = activity(prev);
         if (!p) continue;
         slots.push(slotFor(p, time, prev, ctx, kind));
         prev = p;
@@ -380,7 +387,7 @@ class UserError extends Error { constructor(msg) { super(msg); this.status = 422
 
 async function plan(input) {
   const interests = parseInterests(input.interests);
-  const cats = new Set([...interests, "restaurant", "sight", "beach", "cafe"]);
+  const cats = new Set([...interests, "restaurant", "sight", "cafe"]);
   const names = input.places;
   const nDays = Math.min(input.days, 14);
   const used = names.slice(0, nDays);
@@ -396,6 +403,7 @@ async function plan(input) {
     const pools = {};
     for (const p of pois) (pools[p.cat] ||= []).push(p);
     for (const c in pools) pools[c].sort((a, b) => b.score - a.score);
+    pools.viewpoint = (pools.sight || []).filter((p) => p.viewpoint);
     if (pois.length < 5) throw new UserError(failed.length
       ? `The free map servers are busy, so we couldn't load places for "${name}". Please try again in a minute.`
       : `Not enough mapped places found for "${name}". Try a nearby city or a more specific name.`);

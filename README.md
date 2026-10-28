@@ -11,6 +11,9 @@ By default it loads a Goa weekend for a 16-person office group (beaches, cafés,
 - Day-by-day timeline with real venues, map links and websites
 - Weather forecast, or last year's weather for the same dates when the trip is far off
 - Group tips based on party size
+- Map of each day's stops (Leaflet + OpenStreetMap tiles)
+- Edit a day: move stops earlier or later, or remove them; times stay fixed and activities swap between them
+- Share link: the URL holds the trip and any edits, so friends see the same plan
 - Download as PDF (browser print dialog, "Save as PDF")
 - Responsive, with dark mode
 
@@ -55,7 +58,8 @@ npm run dev        # Vite on :5173, proxies /api to :3000
 
 Notes for the free tier:
 
-- The service sleeps after about 15 minutes idle, so the first visit can take around 50 seconds.
+- The service normally sleeps after about 15 minutes idle. On Render the server pings its own `/healthz` every 10 minutes (using `RENDER_EXTERNAL_URL`) to stay awake. Set `KEEP_AWAKE=0` to turn this off. One always-on service uses about 744 of the 750 free instance hours a month, so don't run a second free service alongside it.
+- After a deploy or restart, the first visit can still take around 50 seconds.
 - The disk is wiped on restart. The Goa default is pre-cached in [.cache/](.cache/) and ships with the repo, so it loads quickly.
 - The first search for any other place usually takes 20 to 45 seconds, because Nominatim allows one request per second. Results are then cached for 7 days, and older cached data is used if the servers fail.
 

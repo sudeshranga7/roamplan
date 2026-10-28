@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import TripForm from "./components/TripForm.jsx";
 import Weather from "./components/Weather.jsx";
 import Itinerary from "./components/Itinerary.jsx";
-import { fetchItinerary, iso, nextFriday } from "./lib.js";
+import { fetchItinerary, iso, nextFriday, readUrl, writeUrl } from "./lib.js";
 
 // Default: a Goa weekend for a 16-person office group.
 const DEFAULT = () => ({
@@ -10,12 +10,17 @@ const DEFAULT = () => ({
   interests: "beaches, cafés, clubs, watersports",
 });
 
+// A shared link (?p=...) opens that exact trip, including any reordered or removed stops.
+const fromUrl = readUrl();
+
 export default function App() {
-  const [form, setForm] = useState(DEFAULT);
+  const [form, setForm] = useState(() => fromUrl?.form || DEFAULT());
   const [result, setResult] = useState(null); // { plan, input }
-  const [pace, setPace] = useState("mid");
+  const [pace, setPace] = useState(fromUrl?.pace || "mid");
+  const [edits, setEdits] = useState(fromUrl?.edits || {}); // { pace: { dayIndex: positions } }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [shareMsg, setShareMsg] = useState("");
   const resultsRef = useRef(null);
   const first = useRef(true);
 
@@ -26,7 +31,10 @@ export default function App() {
       const payload = { ...input, days: +input.days, travellers: +input.travellers };
       const plan = await fetchItinerary(payload);
       setResult({ plan, input: payload });
-      if (!first.current) resultsRef.current?.scrollIntoView({ behavior: "smooth" });
+      if (!first.current) {
+        setEdits({}); // a new plan starts unedited; the first load keeps edits from a shared link
+        resultsRef.current?.scrollIntoView({ behavior: "smooth" });
+      }
     } catch (e) {
       setError(e.message);
     } finally {
@@ -36,11 +44,35 @@ export default function App() {
   }
   useEffect(() => { run(form); }, []);
 
+  // Keep the address bar in sync, so copying it always shares what's on screen.
+  useEffect(() => { if (result) writeUrl(result.input, pace, edits); }, [result, pace, edits]);
+
+  const editDay = (i, pos) => setEdits((all) => {
+    const forPace = { ...(all[pace] || {}) };
+    if (pos) forPace[i] = pos; else delete forPace[i];
+    const next = { ...all, [pace]: forPace };
+    if (!Object.keys(forPace).length) delete next[pace];
+    return next;
+  });
+
   const exportPdf = () => {
     const old = document.title;
     document.title = `RoamPlan - ${result.plan.destination}`;
     window.print();
     document.title = old;
+  };
+
+  const share = async () => {
+    const url = location.href, title = `RoamPlan: ${result.plan.destination}`;
+    try {
+      if (navigator.share && matchMedia("(pointer: coarse)").matches) { await navigator.share({ title, url }); return; }
+      await navigator.clipboard.writeText(url);
+      setShareMsg("Link copied");
+    } catch (e) {
+      if (e?.name === "AbortError") return; // user closed the share sheet
+      setShareMsg("Copy the link from the address bar");
+    }
+    setTimeout(() => setShareMsg(""), 2500);
   };
 
   const plan = result?.plan;
@@ -73,7 +105,10 @@ export default function App() {
                   <h2>{plan.destination}</h2>
                   <p className="muted">{plan.summary}</p>
                 </div>
-                <button type="button" className="ghost" onClick={exportPdf}>Download PDF</button>
+                <div className="head-tools">
+                  <button type="button" className="ghost" onClick={share}>{shareMsg || "Share link"}</button>
+                  <button type="button" className="ghost" onClick={exportPdf}>Download PDF</button>
+                </div>
               </div>
 
               <h3>Weather</h3>
@@ -90,7 +125,7 @@ export default function App() {
                 </>
               )}
 
-              <Itinerary plans={plan.plans} pace={pace} onPace={setPace} />
+              <Itinerary plans={plan.plans} pace={pace} onPace={setPace} edits={edits[pace]} onEdit={editDay} />
 
               <h3>Group tips</h3>
               <ul className="tips">{tips.map((t, i) => <li key={i}>{t}</li>)}</ul>

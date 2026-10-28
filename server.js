@@ -29,6 +29,7 @@ const send = (res, code, obj) => {
 
 http.createServer(async (req, res) => {
   try {
+    if (req.url === "/healthz") { res.writeHead(200, { "content-type": "text/plain" }); return res.end("ok"); }
     if (req.method === "POST" && req.url === "/api/itinerary") {
       let input;
       try { input = JSON.parse(await readBody(req)); } catch { return send(res, 400, { error: "Invalid request." }); }
@@ -59,3 +60,11 @@ http.createServer(async (req, res) => {
     send(res, 500, { error: "Something went wrong building the itinerary. Please try again." });
   }
 }).listen(PORT, () => console.log(`RoamPlan running at http://localhost:${PORT}`));
+
+// Render's free tier sleeps after ~15 idle minutes. A request to our own public URL counts as traffic,
+// so pinging every 10 minutes keeps it awake. Render sets RENDER_EXTERNAL_URL; set KEEP_AWAKE=0 to turn off.
+if (process.env.RENDER_EXTERNAL_URL && process.env.KEEP_AWAKE !== "0") {
+  const url = process.env.RENDER_EXTERNAL_URL.replace(/\/$/, "") + "/healthz";
+  setInterval(() => fetch(url).catch(() => {}), 10 * 60e3).unref();
+  console.log(`Keep-awake ping enabled: ${url}`);
+}
