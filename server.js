@@ -11,7 +11,26 @@ const DIST = path.join(ROOT, "dist"); // built by `npm run build`
 const TYPES = {
   ".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".svg": "image/svg+xml",
   ".json": "application/json", ".png": "image/png", ".ico": "image/x-icon", ".woff2": "font/woff2",
+  ".webmanifest": "application/manifest+json",
 };
+
+// Per-IP limit on plan requests, to protect the free Nominatim and Render quotas.
+// On Render the client's address is the first entry of x-forwarded-for.
+const WINDOW_MS = 10 * 60e3, MAX_PLANS = 30;
+const hits = new Map();
+function rateLimited(req) {
+  const ip = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim() || req.socket.remoteAddress;
+  const now = Date.now();
+  const recent = (hits.get(ip) || []).filter((t) => now - t < WINDOW_MS);
+  const limited = recent.length >= MAX_PLANS;
+  if (!limited) recent.push(now);
+  hits.set(ip, recent);
+  return limited;
+}
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, list] of hits) if (!list.some((t) => now - t < WINDOW_MS)) hits.delete(ip);
+}, WINDOW_MS).unref();
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -39,7 +58,20 @@ http.createServer(async (req, res) => {
       input.days = Math.min(Math.max(parseInt(input.days) || 3, 1), 14);
       input.travellers = Math.min(Math.max(parseInt(input.travellers) || 1, 1), 200);
       input.interests = String(input.interests || "").slice(0, 300);
-      return send(res, 200, await plan(input));
+      input.prefs = Array.isArray(input.prefs) ? input.prefs.filter((p) => p === "veg" || p === "wheelchair") : [];
+      if (rateLimited(req)) return send(res, 429, { error: "That's a lot of plans in a short time. Please wait a few minutes and try again." });
+
+      // Browsers ask for NDJSON: progress lines while we work, then the result. Plain JSON otherwise.
+      if (!String(req.headers.accept || "").includes("application/x-ndjson")) return send(res, 200, await plan(input));
+      res.writeHead(200, { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-cache", "x-accel-buffering": "no" });
+      const line = (obj) => res.write(JSON.stringify(obj) + "\n");
+      try {
+        line({ result: await plan(input, (msg) => line({ progress: msg })) });
+      } catch (e) {
+        if (!e.status) console.error(e);
+        line({ error: e.status ? e.message : "Something went wrong building the itinerary. Please try again." });
+      }
+      return res.end();
     }
     // Static files from dist/, with index.html as the fallback for the single-page app.
     let rel;

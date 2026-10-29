@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { iso } from "../lib.js";
+import { localIso, PREFS } from "../lib.js";
 
 export default function TripForm({ value, onChange, onSubmit, busy, status, error }) {
   const [draft, setDraft] = useState("");
@@ -21,7 +21,7 @@ export default function TripForm({ value, onChange, onSubmit, busy, status, erro
   };
 
   return (
-    <form className="card form" onSubmit={submit} autoComplete="off">
+    <form className="card form" id="plan-form" onSubmit={submit} autoComplete="off">
       <div className="field full">
         <label htmlFor="place">Places</label>
         <div className="chips">
@@ -43,7 +43,7 @@ export default function TripForm({ value, onChange, onSubmit, busy, status, erro
       </div>
       <div className="field">
         <label htmlFor="start">Start date</label>
-        <input id="start" type="date" required min={iso(new Date(Date.now() - new Date().getTimezoneOffset() * 60000))} value={value.startDate} onChange={(e) => set({ startDate: e.target.value })} />
+        <input id="start" type="date" required min={localIso()} value={value.startDate} onChange={(e) => set({ startDate: e.target.value })} />
       </div>
       <div className="field">
         <label htmlFor="days">Days</label>
@@ -57,6 +57,19 @@ export default function TripForm({ value, onChange, onSubmit, busy, status, erro
         <label htmlFor="int">Interests</label>
         <input id="int" value={value.interests} placeholder="e.g. beaches, cafés, museums" onChange={(e) => set({ interests: e.target.value })} />
       </div>
+      <fieldset className="prefs full">
+        <legend className="sr-only">Preferences</legend>
+        {PREFS.map(([k, label]) => {
+          const on = (value.prefs || []).includes(k);
+          return (
+            <label key={k} className={`pref${on ? " on" : ""}`}>
+              <input type="checkbox" checked={on}
+                onChange={() => set({ prefs: on ? value.prefs.filter((p) => p !== k) : [...(value.prefs || []), k] })} />
+              {label}
+            </label>
+          );
+        })}
+      </fieldset>
       <div className="actions full">
         <button type="submit" className="primary" disabled={busy || (!value.places.length && !draft.trim())}>
           {busy ? "Planning…" : "Plan my trip"}

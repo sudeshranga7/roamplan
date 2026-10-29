@@ -1,10 +1,12 @@
-import { useState } from "react";
-import DayMap from "./DayMap.jsx";
-import { fmtDate, isFixed, km, positionsFor } from "../lib.js";
+import { lazy, Suspense, useState } from "react";
+import { fmtDate, isFixed, km, legText, nextAlt, positionsFor, rowsFor } from "../lib.js";
+
+// Leaflet is only downloaded when someone opens a map.
+const DayMap = lazy(() => import("./DayMap.jsx"));
 
 const PACES = [["relaxed", "Relaxed"], ["mid", "Balanced"], ["hectic", "Packed"]];
 
-function Slot({ s, time, distance, editing, canUp, canDown, onUp, onDown, onRemove }) {
+function Slot({ s, time, travel, editing, canUp, canDown, canSwap, onUp, onDown, onSwap, onRemove }) {
   const safeSite = /^https?:\/\//.test(s.website || "") ? s.website : null;
   return (
     <div className="slot">
@@ -12,7 +14,7 @@ function Slot({ s, time, distance, editing, canUp, canDown, onUp, onDown, onRemo
       <div className={`dot${s.n ? " num" : ""}`} data-tag={s.tag} aria-hidden="true">{s.n}</div>
       <div className="slot-body">
         <div className="slot-title"><b>{s.title}</b>{s.tag && <span className="tag" data-tag={s.tag}>{s.tag}</span>}</div>
-        <p>{s.desc}{distance}</p>
+        <p>{s.desc}{travel}</p>
         {(s.link || safeSite) && (
           <p className="links">
             {s.link && <a href={s.link} target="_blank" rel="noopener noreferrer">Map</a>}
@@ -22,6 +24,7 @@ function Slot({ s, time, distance, editing, canUp, canDown, onUp, onDown, onRemo
       </div>
       {editing && (
         <div className="slot-tools">
+          {canSwap && <button type="button" onClick={onSwap} aria-label={`Swap ${s.title} for another option`} title="Try another option">⇄</button>}
           <button type="button" onClick={onUp} disabled={!canUp} aria-label={`Move ${s.title} earlier`}>↑</button>
           <button type="button" onClick={onDown} disabled={!canDown} aria-label={`Move ${s.title} later`}>↓</button>
           <button type="button" onClick={onRemove} aria-label={`Remove ${s.title}`}>×</button>
@@ -36,23 +39,20 @@ function Day({ d, edit, onEdit }) {
   const [showMap, setShowMap] = useState(false);
   const pos = positionsFor(d, edit);
 
-  // Visible rows: the activity now at each time, numbered in order for the map.
+  // Number the stops that have coordinates (for the map) and work out travel from the previous one.
   let n = 0, prev = null;
-  const rows = [];
-  pos.forEach((v, k) => {
-    if (v === -1) return;
-    const s = { ...d.slots[v] };
-    let distance = "";
+  const rows = rowsFor(d, edit).map((r) => {
+    const s = { ...r.s };
+    let travel = "";
     if (s.lat != null) {
       s.n = ++n;
-      if (prev) { const dk = km(prev, s); if (dk >= 0.5) distance = ` About ${dk < 10 ? dk.toFixed(1) : Math.round(dk)} km from the previous stop.`; }
+      if (prev) travel = legText(km(prev, s));
       prev = s;
     }
-    rows.push({ k, s, time: d.slots[k].time, distance });
+    return { ...r, s, travel };
   });
   const movable = rows.filter((r) => !isFixed(r.s));
-  const swap = (a, b) => { const next = [...pos]; [next[a], next[b]] = [next[b], next[a]]; onEdit(next); };
-  const remove = (k) => { const next = [...pos]; next[k] = -1; onEdit(next); };
+  const update = (fn) => { const next = [...pos]; fn(next); onEdit(next); };
   const stops = rows.filter((r) => r.s.lat != null).map((r) => ({ ...r.s, time: r.time }));
 
   return (
@@ -65,15 +65,23 @@ function Day({ d, edit, onEdit }) {
           {edit && <button type="button" className="chip-btn" onClick={() => onEdit(null)}>Reset</button>}
         </div>
       </div>
-      {showMap && <DayMap stops={stops} />}
+      {d.note && <p className="notice day-note">☂ {d.note}</p>}
+      {editing && <p className="muted small edit-hint">⇄ tries a nearby alternative · ↑↓ swaps two stops' times · × removes a stop</p>}
+      {showMap && (
+        <Suspense fallback={<div className="daymap skeleton" />}>
+          <DayMap stops={stops} />
+        </Suspense>
+      )}
       <div className="timeline">
         {rows.map((r) => {
           const i = movable.indexOf(r);
           return (
-            <Slot key={r.k} s={r.s} time={r.time} distance={r.distance} editing={editing}
-              canUp={i > 0} canDown={i >= 0 && i < movable.length - 1}
-              onUp={() => swap(r.k, movable[i - 1].k)} onDown={() => swap(r.k, movable[i + 1].k)}
-              onRemove={() => remove(r.k)} />
+            <Slot key={r.k} s={r.s} time={r.time} travel={r.travel} editing={editing}
+              canUp={i > 0} canDown={i >= 0 && i < movable.length - 1} canSwap={!!r.s.alts?.length}
+              onUp={() => update((p) => { [p[r.k], p[movable[i - 1].k]] = [p[movable[i - 1].k], p[r.k]]; })}
+              onDown={() => update((p) => { [p[r.k], p[movable[i + 1].k]] = [p[movable[i + 1].k], p[r.k]]; })}
+              onSwap={() => update((p) => { p[r.k] = nextAlt(d, r.v); })}
+              onRemove={() => update((p) => { p[r.k] = -1; })} />
           );
         })}
         {!rows.length && <p className="muted small">All stops removed. Use Reset to bring them back.</p>}
@@ -88,7 +96,7 @@ export default function Itinerary({ plans, pace, onPace, edits, onEdit }) {
     <>
       <div className="tabs-row">
         <h3>Itinerary</h3>
-        <div className="seg" role="tablist">
+        <div className="seg" role="tablist" aria-label="Pace">
           {PACES.map(([k, label]) => (
             <button key={k} role="tab" aria-selected={pace === k} onClick={() => onPace(k)}>{label}</button>
           ))}

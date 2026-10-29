@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { getWeather } from "../lib.js";
 
+const icon = (c) =>
+  c === 0 ? "☀️" : c <= 2 ? "🌤️" : c === 3 ? "☁️" : c <= 48 ? "🌫️" : c <= 67 ? "🌧️" : c <= 77 ? "❄️" : c <= 82 ? "🌦️" : "⛈️";
+
 export default function Weather({ places, startDate, days }) {
   const [list, setList] = useState(null);
 
@@ -23,7 +26,7 @@ export default function Weather({ places, startDate, days }) {
           <div className="card wcard" key={w.place}><div className="place">{w.place}</div><div className="row">{w.error}</div></div>
         ) : (
           <div className="card wcard" key={w.place}>
-            <div className="place">{w.place}</div>
+            <div className="place">{w.place}<span className="wicon" aria-hidden="true">{icon(w.code)}</span></div>
             <div className="temp">{w.hi}°<span> / {w.lo}°C</span></div>
             <div className="row">{w.desc} · {w.rain != null ? `${w.rain}% rain chance` : `${w.mm} mm rain`}</div>
             <div className="row faint">{w.typical ? "Typical for these dates (last year)" : "Forecast"}</div>
